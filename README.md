@@ -9,6 +9,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
 | v4.1 | [`v4.1`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v4.1) | [`f744438`](https://github.com/pyvista/setup-headless-display-action/commit/f744438e29e50189f40f1749859bac7d0f69b5fa) |
+| v4.2 | [`v4.2`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v4.2) | [`7d84ae8`](https://github.com/pyvista/setup-headless-display-action/commit/7d84ae825e6d9297a8e99bdbbae20d1b919a0b19) |
 
 ## Privacy
 
