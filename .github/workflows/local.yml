@@ -1,0 +1,85 @@
+name: Local Testing
+
+on:  # yamllint disable-line rule:truthy
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 1 * *"
+  push:
+    tags:
+      - "*"
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-14, macos-13, ubuntu-24.04, ubuntu-22.04, windows-2025, windows-2022]
+        qt: [""]
+        mesa: [""]
+        include:
+          - os: ubuntu-22.04
+            qt: "pyqt5"
+          - os: ubuntu-24.04
+            qt: "pyqt6"
+          - os: windows-latest
+            qt: "pyqt6"
+            mesa: "latest"
+          - os: ubuntu-latest
+            qt: "pyside6"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test Action
+        uses: ./
+        with:
+          qt: ${{ matrix.qt != '' }}
+          mesa3d-release: ${{ matrix.mesa || '24.3.0' }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyvista
+      - run: python tests/test_pyvista.py
+      - run: python -c "import pyvista;print(pyvista.Report())"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.qt }}-sphere
+          path: sphere.png
+          if-no-files-found: error
+      - name: Second test of PyVista
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_QT: ${{ matrix.qt }}
+        run: python -c "import pyvista;pyvista.Cube().plot(screenshot='${MATRIX_OS}-${MATRIX_QT}-cube.png')"
+      - name: Test Qt
+        if: matrix.qt != ''
+        env:
+          MATRIX_QT: ${{ matrix.qt }}
+        run: |
+          set -eo pipefail
+          pip install "$MATRIX_QT" matplotlib qtpy
+          QT_DEBUG_PLUGINS=1 LIBGL_DEBUG=verbose python tests/test_qt.py
+        shell: bash
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.qt }}-cube
+          path: ${{ matrix.os }}-${{ matrix.qt }}-cube.png
+          if-no-files-found: error
+      - name: Test Vispy Qt
+        if: matrix.qt != ''
+        run: |
+          pip install vispy pillow pyopengl
+          python tests/test_vispy_qt.py
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_QT: ${{ matrix.qt }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.qt != ''
+        with:
+          name: ${{ matrix.os }}-${{ matrix.qt }}-vispy-volume
+          path: ${{ matrix.os }}-${{ matrix.qt }}-vispy-volume.png

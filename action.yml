@@ -110,8 +110,8 @@ runs:
           echo "Using specified Mesa3D release version..."
           export MESA3D_VERSION="$MESA3D_RELEASE"
         fi
-        safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
-        echo "MESA3D_VERSION=${safe}" | tee -a "$GITHUB_ENV"
+        safe_version=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
+        echo "MESA3D_VERSION=${safe_version}" | tee -a "$GITHUB_ENV"
     - name: Enable Mesa3D off-screen renderer on Windows
       if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
       shell: bash
@@ -124,7 +124,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH/windows/install_opengl.sh"
+      run: bash "${ACTION_PATH}/windows/install_opengl.sh"
     - name: Configure headless display on Linux
       if: runner.os == 'Linux'
       shell: bash
