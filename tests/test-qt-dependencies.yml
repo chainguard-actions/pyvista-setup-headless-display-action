@@ -1,0 +1,49 @@
+name: Test headless display with Qt dependencies
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          pyvista: "true"
+          qt: "true"
+          wm: "false"
+
+      - name: Assert DISPLAY is set
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          if [ -z "$DISPLAY" ]; then
+            echo "FAIL: DISPLAY env var is not set"
+            exit 1
+          fi
+          echo "PASS: DISPLAY=$DISPLAY"
+
+      - name: Assert PYVISTA_OFF_SCREEN is set
+        run: |
+          echo "PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+          if [ "$PYVISTA_OFF_SCREEN" != "true" ]; then
+            echo "FAIL: expected PYVISTA_OFF_SCREEN=true, got '$PYVISTA_OFF_SCREEN'"
+            exit 1
+          fi
+          echo "PASS: PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+
+      - name: Assert Qt library is installed
+        run: |
+          if ! dpkg -l libxcb-cursor0 2>/dev/null | grep -q '^ii'; then
+            echo "FAIL: libxcb-cursor0 (Qt dependency) is not installed"
+            exit 1
+          fi
+          echo "PASS: Qt dependencies are installed"
+
+      - name: Assert Xvfb is running
+        run: |
+          if ! pgrep -x Xvfb > /dev/null; then
+            echo "FAIL: Xvfb is not running"
+            exit 1
+          fi
+          echo "PASS: Xvfb is running"

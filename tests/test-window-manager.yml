@@ -1,0 +1,57 @@
+name: Test headless display with herbstluftwm window manager
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          pyvista: "true"
+          qt: "false"
+          wm: "herbstluftwm"
+
+      - name: Assert DISPLAY is set
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          if [ -z "$DISPLAY" ]; then
+            echo "FAIL: DISPLAY env var is not set"
+            exit 1
+          fi
+          echo "PASS: DISPLAY=$DISPLAY"
+
+      - name: Assert PYVISTA_OFF_SCREEN is set
+        run: |
+          echo "PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+          if [ "$PYVISTA_OFF_SCREEN" != "true" ]; then
+            echo "FAIL: expected PYVISTA_OFF_SCREEN=true, got '$PYVISTA_OFF_SCREEN'"
+            exit 1
+          fi
+          echo "PASS: PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+
+      - name: Assert herbstluftwm is installed
+        run: |
+          if ! command -v herbstluftwm > /dev/null 2>&1; then
+            echo "FAIL: herbstluftwm is not installed"
+            exit 1
+          fi
+          echo "PASS: herbstluftwm is installed"
+
+      - name: Assert herbstluftwm is running
+        run: |
+          if ! pgrep -x herbstluftwm > /dev/null; then
+            echo "FAIL: herbstluftwm is not running"
+            exit 1
+          fi
+          echo "PASS: herbstluftwm is running"
+
+      - name: Assert Xvfb is running
+        run: |
+          if ! pgrep -x Xvfb > /dev/null; then
+            echo "FAIL: Xvfb is not running"
+            exit 1
+          fi
+          echo "PASS: Xvfb is running"
