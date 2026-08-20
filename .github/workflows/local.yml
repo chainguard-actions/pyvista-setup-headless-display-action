@@ -1,0 +1,136 @@
+name: Local Testing
+
+on:  # yamllint disable-line rule:truthy
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 1 * *"
+  push:
+    tags:
+      - "*"
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-26-intel, macos-15, macos-14, macos-15-intel, ubuntu-26.04, ubuntu-24.04, ubuntu-22.04, ubuntu-26.04-arm, ubuntu-24.04-arm, ubuntu-22.04-arm, ubuntu-slim, windows-2025, windows-2022]
+        qt: [""]
+        mesa: [""]
+        wm: [""]
+        include:
+          - os: ubuntu-22.04
+            qt: "pyqt5"
+          - os: ubuntu-24.04
+            qt: "pyqt6"
+          - os: windows-latest
+            qt: "pyqt6"
+            mesa: "latest"
+          - os: ubuntu-latest
+            qt: "pyside6"
+          # the only entry that exercises the cocoa branch of tests/test_qt.py
+          - os: macos-latest
+            qt: "pyqt6"
+          # Wayland instead of Xvfb: a headless Weston compositor, no DISPLAY
+          - os: ubuntu-latest
+            qt: "pyqt6"
+            wm: "weston"
+          - os: ubuntu-latest
+            qt: "pyside6"
+            wm: "weston"
+          # Weston 14, which spells the backend "headless" rather than
+          # "headless-backend.so", on both architectures. Same binding as the
+          # entries above so the compositor version and the arch are the only
+          # things that differ.
+          - os: ubuntu-26.04
+            qt: "pyqt6"
+            wm: "weston"
+          - os: ubuntu-26.04-arm
+            qt: "pyqt6"
+            wm: "weston"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # Weston reruns existing os/qt combinations, so artifacts need the axis
+      ARTIFACT_PREFIX: ${{ matrix.os }}-${{ matrix.qt }}${{ matrix.wm && format('-{0}', matrix.wm) || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Test Action
+        uses: ./
+        with:
+          qt: ${{ matrix.qt != '' }}
+          wm: ${{ matrix.wm || 'false' }}
+          mesa3d-release: ${{ matrix.mesa || '24.3.0' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - run: pip install pyvista
+      - name: Test PyVista
+        id: pyvista
+        run: python tests/test_pyvista.py
+      - run: python -c "import pyvista;print(pyvista.Report())"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-sphere
+          path: sphere.png
+          if-no-files-found: error
+      - name: Second test of PyVista
+        env:
+          ARTIFACT_PREFIX: ${{ env.ARTIFACT_PREFIX }}
+        run: python -c "import pyvista;pyvista.Cube().plot(screenshot='${ARTIFACT_PREFIX}-cube.png')"
+      - name: Test Qt
+        id: qt
+        if: matrix.qt != ''
+        env:
+          MATRIX_QT: ${{ matrix.qt }}
+        run: |
+          set -eo pipefail
+          qt_pkgs=()
+          if [ -n "$MATRIX_QT" ]; then
+            while IFS= read -r -d '' t; do qt_pkgs+=("$t"); done \
+              < <(printf '%s' "$MATRIX_QT" | xargs printf '%s\0')
+          fi
+          pip install "${qt_pkgs[@]}" matplotlib qtpy
+          QT_DEBUG_PLUGINS=1 LIBGL_DEBUG=verbose python tests/test_qt.py
+        shell: bash
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-cube
+          path: ${{ env.ARTIFACT_PREFIX }}-cube.png
+          if-no-files-found: error
+      - name: Test Vispy Qt
+        if: matrix.qt != ''
+        run: |
+          pip install vispy pillow pyopengl
+          python tests/test_vispy_qt.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.qt != ''
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-vispy-volume
+          path: ${{ env.ARTIFACT_PREFIX }}-vispy-volume.png
+      - name: Diagnose a failed library load
+        # Only on failure: the LD_DEBUG third of this runs to thousands of
+        # lines. ubuntu-slim is what it is here for -- a container image with
+        # far less preinstalled than the full runner, so a plugin or driver
+        # dlopen is the likeliest thing to come up short.
+        if: always() && runner.os == 'Linux' && (steps.pyvista.outcome == 'failure' || steps.qt.outcome == 'failure')
+        env:
+          PYVISTA_OUTCOME: ${{ steps.pyvista.outcome }}
+          QT_OUTCOME: ${{ steps.qt.outcome }}
+        run: |
+          if [[ "$PYVISTA_OUTCOME" == "failure" ]]; then
+            bash tests/debug_libs.sh tests/test_pyvista.py
+          fi
+          if [[ "$QT_OUTCOME" == "failure" ]]; then
+            bash tests/debug_libs.sh tests/test_qt.py
+          fi
+        shell: bash
+      - name: Compositor log
+        if: always() && matrix.wm == 'weston'
+        run: cat "$WESTON_LOG" || true
+        shell: bash

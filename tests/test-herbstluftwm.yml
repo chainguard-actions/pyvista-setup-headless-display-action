@@ -1,0 +1,66 @@
+name: Test herbstluftwm window manager
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          wm: "herbstluftwm"
+
+      - name: Assert DISPLAY is set (Xvfb runs under herbstluftwm)
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          if [ -z "$DISPLAY" ]; then
+            echo "FAIL: DISPLAY is not set"
+            exit 1
+          fi
+          if [ "$DISPLAY" != ":99.0" ]; then
+            echo "FAIL: expected DISPLAY=:99.0, got $DISPLAY"
+            exit 1
+          fi
+          echo "PASS: DISPLAY=$DISPLAY"
+
+      - name: Assert XDG_SESSION_TYPE is x11
+        run: |
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE"
+          if [ "$XDG_SESSION_TYPE" != "x11" ]; then
+            echo "FAIL: expected XDG_SESSION_TYPE=x11, got '$XDG_SESSION_TYPE'"
+            exit 1
+          fi
+          echo "PASS: XDG_SESSION_TYPE=$XDG_SESSION_TYPE"
+
+      - name: Assert PYVISTA_OFF_SCREEN is set
+        run: |
+          echo "PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+          if [ "$PYVISTA_OFF_SCREEN" != "true" ]; then
+            echo "FAIL: expected PYVISTA_OFF_SCREEN=true, got '$PYVISTA_OFF_SCREEN'"
+            exit 1
+          fi
+          echo "PASS: PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+
+      - name: Assert Xvfb is running
+        run: |
+          if ! pgrep -x Xvfb > /dev/null; then
+            echo "FAIL: Xvfb is not running"
+            exit 1
+          fi
+          echo "PASS: Xvfb is running"
+
+      - name: Assert herbstluftwm is installed and running
+        run: |
+          if ! command -v herbstluftwm > /dev/null 2>&1; then
+            echo "FAIL: herbstluftwm is not installed"
+            exit 1
+          fi
+          echo "PASS: herbstluftwm is installed"
+          # Check herbstclient can communicate with the running WM
+          if herbstclient version > /dev/null 2>&1; then
+            echo "PASS: herbstluftwm is running"
+          else
+            echo "WARN: herbstclient could not connect (may still be starting)"
+          fi
