@@ -119,11 +119,13 @@ runs:
       run: |
         echo "Enabling Mesa3D off-screen renderer for Windows..."
         export MESA3D_OFFSCREEN="true"
-        echo "MESA3D_OFFSCREEN=${MESA3D_OFFSCREEN}" | tee -a $GITHUB_ENV
+        echo "MESA3D_OFFSCREEN=${MESA3D_OFFSCREEN}" | tee -a "$GITHUB_ENV"
     - name: Install OpenGL on Windows
       if: runner.os == 'Windows'
-      shell: bash
-      run: bash "$GITHUB_ACTION_PATH/windows/install_opengl.sh"
+      shell: cmd
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "%ACTION_PATH%\windows\install_opengl.sh"
     - name: Configure headless display on Linux
       if: runner.os == 'Linux'
       shell: bash
