@@ -13,6 +13,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v4.1 | [`v4.1`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v4.1) | [`f744438`](https://github.com/pyvista/setup-headless-display-action/commit/f744438e29e50189f40f1749859bac7d0f69b5fa) |
 | v4.2 | [`v4.2`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v4.2) | [`7d84ae8`](https://github.com/pyvista/setup-headless-display-action/commit/7d84ae825e6d9297a8e99bdbbae20d1b919a0b19) |
 | v4.3 | [`v4.3`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v4.3) | [`5bc8de3`](https://github.com/pyvista/setup-headless-display-action/commit/5bc8de3bc71fcda7a96439571287a554901541a0) |
+| v5.0.0 | [`v5.0.0`](https://github.com/chainguard-actions/pyvista-setup-headless-display-action/tree/v5.0.0) | [`b0bf9f5`](https://github.com/pyvista/setup-headless-display-action/commit/b0bf9f57d62d2b3fee9f1c0e0c7e390f05e97a4e) |
 
 ## Privacy
 
