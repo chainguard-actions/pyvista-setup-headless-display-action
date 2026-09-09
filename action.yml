@@ -1,0 +1,266 @@
+name: "setup-headless-display-action"
+description: "Setup a headless display on Linux and Windows"
+author: PyVista Developers'
+inputs:
+  pyvista:
+    description: "Set PyVista env vars for headless mode"
+    required: false
+    default: "true"
+  qt:
+    description: "Install libraries required for Qt on Linux"
+    required: false
+    default: "false"
+  # Every window manager here implies its session type, because none of them
+  # can do both: herbstluftwm is X11-only and weston is Wayland-only. A wm that
+  # runs on either (gnome-shell, kwin) would need a separate input saying which
+  # session to start; nothing needs that yet.
+  wm:
+    description: |
+      Window manager to run on Linux. Can currently be "false", "herbstluftwm"
+      (X11, started on top of Xvfb), or "weston" (a headless Wayland
+      compositor, which replaces Xvfb rather than running on top of it: no X
+      server is started, DISPLAY is left unset, and QT_QPA_PLATFORM is set to
+      "wayland").
+    required: false
+    default: "false"
+  mesa3d-release:
+    description: |
+      Mesa3D release to install (by default, the latest release is installed).
+      This is only used on Windows.
+    required: false
+    default: "24.3.0"
+  install-mesa3d-offscreen:
+    description: |
+      Installs Mesa3D off-screen renderer on Windows. Configures VTK to use it
+      by means of the `VTK_DEFAULT_OPENGL_WINDOW` environment variable, and
+      sets `LP_NUM_THREADS=0` so processes that rendered do not hang at exit.
+      This is only used on Windows.
+    required: false
+    default: "true"
+branding:
+  icon: "monitor"
+  color: "blue"
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        QT: ${{ inputs.qt }}
+        WM: ${{ inputs.wm }}
+      run: |
+        # Bail out on a stalled mirror connection and retry instead of hanging for hours
+        opts=(
+          -o Acquire::Retries=3
+          -o Acquire::http::Timeout=30
+          -o Acquire::https::Timeout=30
+          -o DPkg::Lock::Timeout=120  # wait out unattended-upgrades rather than erroring
+          -o Dpkg::Options::=--force-unsafe-io  # no fsync; the runner is ephemeral
+        )
+        packages=(libglx-mesa0 libgl1)
+        if [[ "$WM" == "weston" ]]; then
+          # weston pulls in libwayland-server0/libdrm; the rest is what a Mesa
+          # EGL client needs to talk to it, plus the keymap data weston compiles
+          # at startup. No xvfb: Weston is the display server here, not a
+          # window manager running on top of one.
+          packages+=(
+            weston
+            libegl1
+            libegl-mesa0
+            libgl1-mesa-dri
+            libgles2
+            libopengl0
+            libwayland-egl1
+            libxkbcommon0
+            xkb-data
+          )
+        else
+          packages+=(xvfb x11-xserver-utils)
+          # herbstluftwm is X11-only, so it can only join the Xvfb path
+          if [[ "$WM" == "herbstluftwm" ]]; then
+            packages+=(herbstluftwm)
+          fi
+        fi
+        if [[ "$QT" != "false" ]]; then
+          packages+=(
+            libdbus-1-3
+            libegl1
+            libopengl0
+            libosmesa6
+            libpulse0
+            libxcb-cursor0
+            libxcb-icccm4
+            libxcb-image0
+            libxcb-keysyms1
+            libxcb-randr0
+            libxcb-render-util0
+            libxcb-shape0
+            libxcb-xfixes0
+            libxcb-xinerama0
+            libxcb-xinput0
+            libxkbcommon-x11-0
+            mesa-utils
+            x11-utils
+          )
+        fi
+        # Container-based runners (ubuntu-slim) already run as root and may
+        # ship no sudo at all, so ask for it only when it is actually needed.
+        sudo=()
+        if [[ "$(id -u)" -ne 0 ]]; then
+          sudo=(sudo)
+        fi
+        # `timeout` backstops hangs the apt-level timeouts above do not cover
+        "${sudo[@]}" timeout 5m apt-get update "${opts[@]}"
+        "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y "${opts[@]}" "${packages[@]}"
+    - name: Determine OpenGL version to install on Windows
+      if: runner.os == 'Windows'
+      shell: bash
+      env:
+        MESA3D_RELEASE: ${{ inputs.mesa3d-release }}
+        INSTALL_MESA3D_OFFSCREEN: ${{ inputs.install-mesa3d-offscreen }}
+      run: |
+        if [ "$MESA3D_RELEASE" == "latest" ]; then
+          if [[ "$INSTALL_MESA3D_OFFSCREEN" == "true" ]]; then
+            echo "Using latest Mesa3D release with off-screen renderer..."
+            export MESA3D_VERSION=25.0.7
+          else
+            echo "Fetching latest Mesa3D release version..."
+            export MESA3D_VERSION=$(curl -s --retry 3 --connect-timeout 30 --max-time 60 https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest | grep -o '"tag_name": ".*"' | sed 's/"tag_name": "\(.*\)"/\1/')
+          fi
+        else
+          echo "Using specified Mesa3D release version..."
+          export MESA3D_VERSION="$MESA3D_RELEASE"
+        fi
+        safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
+        echo "MESA3D_VERSION=${safe}" >> "$GITHUB_ENV"
+    - name: Enable Mesa3D off-screen renderer on Windows
+      if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
+      shell: bash
+      run: |
+        echo "Enabling Mesa3D off-screen renderer for Windows..."
+        export MESA3D_OFFSCREEN="true"
+        echo "MESA3D_OFFSCREEN=${MESA3D_OFFSCREEN}" | tee -a $GITHUB_ENV
+    - name: Install OpenGL on Windows
+      if: runner.os == 'Windows'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/windows/install_opengl.sh"
+    - name: Start a headless X server (Xvfb) on Linux
+      if: runner.os == 'Linux' && inputs.wm != 'weston'
+      shell: bash
+      run: |
+        export DISPLAY=:99.0
+        echo "DISPLAY=:99.0" >> $GITHUB_ENV
+        # Qt (and GTK, and SDL) consult XDG_SESSION_TYPE when picking a
+        # backend, so leave no room for it to guess differently than we set up
+        echo "XDG_SESSION_TYPE=x11" >> $GITHUB_ENV
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        for _ in $(seq 100); do
+          xset q > /dev/null 2>&1 && break
+          sleep 0.1
+        done
+        xset q > /dev/null  # fail here rather than with a cryptic error downstream
+    - name: Start a headless Wayland compositor (Weston) on Linux
+      if: runner.os == 'Linux' && inputs.wm == 'weston'
+      shell: bash
+      run: |
+        # The runners have no GPU, and unlike the Xvfb path a Wayland client
+        # cannot fall back to OSMesa: it either gets an EGL context from the
+        # compositor or it gets nothing. Pin both ends to llvmpipe.
+        export LIBGL_ALWAYS_SOFTWARE=1
+        export GALLIUM_DRIVER=llvmpipe
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-${RUNNER_TEMP}/xdg-runtime-dir}"
+        mkdir -p "$XDG_RUNTIME_DIR"
+        chmod 700 "$XDG_RUNTIME_DIR"
+        WAYLAND_DISPLAY=wayland-headless
+        socket="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+        log="${RUNNER_TEMP}/weston.log"
+        weston --version
+        # Two things vary across the Weston releases in Ubuntu, and both matter:
+        #   * Weston 14 renamed the backend "headless-backend.so" -> "headless".
+        #   * Selecting the GL renderer was "--use-gl" before Weston 10 and is
+        #     "--renderer=gl" after.
+        # The renderer is not optional: the headless backend defaults to pixman,
+        # which advertises neither wl_drm nor linux-dmabuf, so Mesa hands a
+        # client no EGL context and a QOpenGLWidget has nothing to render into.
+        # A job in that state passes while testing nothing, so only GL-capable
+        # spellings are tried and the compositor's own log is checked for the
+        # renderer it actually loaded.
+        for args in \
+          "--backend=headless --renderer=gl" \
+          "--backend=headless-backend.so --renderer=gl" \
+          "--backend=headless-backend.so --use-gl"; do
+          echo "Trying: weston $args"
+          rm -f "$socket" "$socket.lock"
+          # shellcheck disable=SC2086
+          nohup weston $args --socket="$WAYLAND_DISPLAY" \
+            --width=1920 --height=1080 --idle-time=0 >"$log" 2>&1 &
+          pid=$!
+          for _ in $(seq 60); do
+            if [ -S "$socket" ]; then
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          # Weston creates the socket only after the backend and renderer are
+          # up, so by now the log says which renderer won.
+          if [ -S "$socket" ] && grep -qE 'Using GL renderer|GL renderer: ' "$log"; then
+            echo "Compositor is up: weston $args"
+            {
+              echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+              echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+              echo "XDG_SESSION_TYPE=wayland"
+              echo "QT_QPA_PLATFORM=wayland"
+              echo "LIBGL_ALWAYS_SOFTWARE=1"
+              echo "GALLIUM_DRIVER=llvmpipe"
+              echo "WESTON_LOG=$log"
+            } | tee -a "$GITHUB_ENV"
+            exit 0
+          fi
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          echo "--- weston.log for: $args ---"
+          cat "$log" || true
+        done
+        echo "::error::Weston never came up on the GL renderer"
+        exit 1
+    - name: Start window manager (herbstluftwm) on Linux
+      if: runner.os == 'Linux' && inputs.wm == 'herbstluftwm'
+      shell: bash
+      run: |
+        herbstluftwm &
+        for _ in $(seq 100); do
+          herbstclient version > /dev/null 2>&1 && break
+          sleep 0.1
+        done
+    - name: Configure for PyVista
+      if: inputs.pyvista != 'false'
+      shell: bash
+      run: echo "PYVISTA_OFF_SCREEN=true" >> $GITHUB_ENV
+    - name: Configure Mesa3D for PyVista/VTK (on Windows)
+      if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
+      shell: bash
+      run: |
+        echo "VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow" >> $GITHUB_ENV
+        # llvmpipe's rasterizer teardown deadlocks at process exit on Windows.
+        echo "LP_NUM_THREADS=0" >> $GITHUB_ENV

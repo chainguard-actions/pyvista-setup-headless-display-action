@@ -1,0 +1,53 @@
+name: Test Qt libraries installation
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          pyvista: "true"
+          qt: "true"
+          wm: "false"
+
+      - name: Assert DISPLAY is set
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          if [ -z "$DISPLAY" ]; then
+            echo "FAIL: DISPLAY is not set"
+            exit 1
+          fi
+          echo "PASS: DISPLAY=$DISPLAY"
+
+      - name: Assert PYVISTA_OFF_SCREEN is set
+        run: |
+          echo "PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+          if [ "$PYVISTA_OFF_SCREEN" != "true" ]; then
+            echo "FAIL: PYVISTA_OFF_SCREEN is not 'true'"
+            exit 1
+          fi
+          echo "PASS: PYVISTA_OFF_SCREEN=true"
+
+      - name: Assert Qt libraries are installed
+        run: |
+          # Check a few key Qt-related packages were installed
+          for pkg in libdbus-1-3 libxkbcommon-x11-0 libxcb-icccm4; do
+            if dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+              echo "PASS: $pkg is installed"
+            else
+              echo "FAIL: $pkg is not installed"
+              exit 1
+            fi
+          done
+
+      - name: Assert mesa-utils is installed (provides glxinfo)
+        run: |
+          if ! command -v glxinfo > /dev/null 2>&1; then
+            echo "FAIL: glxinfo not found (mesa-utils not installed)"
+            exit 1
+          fi
+          echo "PASS: glxinfo is available"
