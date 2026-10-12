@@ -10,82 +10,33 @@
 
 **Harden Agent Version:** `2`
 
-Action **pyvista--setup-headless-display-action/v3.3** was hardened automatically. 10 finding(s) were identified and resolved across 1 iteration(s).
+Action **pyvista--setup-headless-display-action/v3.3** was hardened automatically. 4 finding(s) were identified and resolved across 3 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): ${{ inputs.mesa3d-release }} is directly interpolated inside a run: shell command in two places — once in a quoted comparison (`if [ "${{ inputs.mesa3d-release }}" == "latest" ]`) and once unquoted (`export MESA3D_VERSION=${{ inputs.mesa3d-release }}`). Additionally, ${{ github.action_path }} is directly interpolated in a cmd run: block (`run: bash ${{ github.action_path }}\windows\install_opengl.sh`). All three are YAML-template-substituted before the shell sees them, enabling command injection via a crafted input value.
+Direct expression interpolation of untrusted inputs inside `run:` shell blocks in action.yml.
+
+(a) Line 75: `if [ "${{ inputs.mesa3d-release }}" == "latest" ]` — the `inputs.mesa3d-release` expression is interpolated directly into the shell command string before the shell parses it, allowing an attacker-controlled value to inject arbitrary shell syntax.
+
+(a)+(b) Line 79: `export MESA3D_VERSION=${{ inputs.mesa3d-release }}` — same input is interpolated unquoted, compounding the injection risk (shell metacharacters in the value are parsed by the shell).
+
+(a) Line 84: `run: bash ${{ github.action_path }}\windows\install_opengl.sh` — `github.action_path` is interpolated directly into a `cmd` shell `run:` block. Any expression inside `${{ }}` in a `run:` block is a script-injection risk regardless of context.
 
 Locations:
 
-- `action.yml:70`
-- `action.yml:74`
-- `action.yml:80`
+- `action.yml:75`
+- `action.yml:79`
+- `action.yml:84`
 
 ### github-env-injection (severity: high)
 
-The 'Determine OpenGL version to install on Windows' step writes MESA3D_VERSION to $GITHUB_ENV via `echo "MESA3D_VERSION=${MESA3D_VERSION}" | tee -a $GITHUB_ENV`. MESA3D_VERSION is derived directly from ${{ inputs.mesa3d-release }} (an attacker-controlled input) without the required sanitization step (`printf '%s' ... | tr -d '\n\r'`). A newline-embedded value in the input could inject arbitrary environment variables into subsequent steps.
+At line 81, the shell variable `MESA3D_VERSION` — which is derived directly from `inputs.mesa3d-release` (an untrusted action input, interpolated at line 79) — is written to `$GITHUB_ENV` via `echo "MESA3D_VERSION=${MESA3D_VERSION}" | tee -a $GITHUB_ENV` without the required sanitization step (`printf '%s' "$MESA3D_VERSION" | tr -d '\n\r'`). A newline character in the input value can inject arbitrary environment variable assignments into `$GITHUB_ENV`, affecting subsequent steps in the calling workflow.
 
 Locations:
 
-- `action.yml:76`
-
-### script-injection (severity: high)
-
-Sub-rule (a): Multiple run: blocks in local.yml directly interpolate ${{ matrix.os }} and ${{ matrix.qt }} (workflow-controllable matrix values) into shell commands without routing through env: variables. Offending lines: `python -c "import pyvista;pyvista.Cube().plot(screenshot='${{ matrix.os }}-${{ matrix.qt }}-cube.png')"` and `pip install ${{ matrix.qt }} matplotlib qtpy`. These allow shell metacharacter injection via matrix values.
-
-Locations:
-
-- `.github/workflows/local.yml:48`
-- `.github/workflows/local.yml:51`
-
-### script-injection (severity: high)
-
-Sub-rule (a): A run: block in production.yml directly interpolates ${{ matrix.os }} (a workflow-controllable matrix value) into a shell command: `python -c "import pyvista;pyvista.Sphere().plot(screenshot='${{ matrix.os }}-sphere.png')"`. This allows shell metacharacter injection via a crafted matrix value.
-
-Locations:
-
-- `.github/workflows/production.yml:19`
-
-### unpinned-uses (severity: high)
-
-Multiple uses: references in local.yml are pinned to mutable version tags rather than full 40-character commit SHAs, making them vulnerable to supply-chain attacks: `actions/checkout@v4`, `actions/setup-python@v5`, `actions/upload-artifact@v4` (appears three times).
-
-Locations:
-
-- `.github/workflows/local.yml:32`
-- `.github/workflows/local.yml:38`
-- `.github/workflows/local.yml:44`
-- `.github/workflows/local.yml:55`
-- `.github/workflows/local.yml:64`
-
-### unpinned-uses (severity: high)
-
-Multiple uses: references in production.yml are pinned to mutable version tags rather than full 40-character commit SHAs: `pyvista/setup-headless-display-action@v3`, `actions/setup-python@v5`, `actions/upload-artifact@v4`.
-
-Locations:
-
-- `.github/workflows/production.yml:14`
-- `.github/workflows/production.yml:15`
-- `.github/workflows/production.yml:20`
-
-### missing-permissions (severity: medium)
-
-local.yml has no top-level permissions: block and no job-level permissions: block on the 'test' job. Without explicit permissions, the workflow inherits the default repository permissions (which can be write-all in some configurations), violating the principle of least privilege.
-
-Locations:
-
-- `.github/workflows/local.yml:1`
-
-### missing-permissions (severity: medium)
-
-production.yml has no top-level permissions: block and no job-level permissions: block on the 'test' job. Without explicit permissions, the workflow inherits the default repository permissions, violating the principle of least privilege.
-
-Locations:
-
-- `.github/workflows/production.yml:1`
+- `action.yml:81`
 
 ### static-inline-injection (severity: high)
 
@@ -107,25 +58,33 @@ Locations:
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, unpinned-uses, missing-permissions, static-inline-injection
+**Fixes applied:** script-injection, github-env-injection, static-inline-injection
 
 **Notes:**
 
-Fixed all 10 findings across action.yml, local.yml, and production.yml:
+Fixed all four findings in action.yml:
 
-1. action.yml script-injection: Moved `${{ inputs.mesa3d-release }}` to env block as MESA3D_RELEASE; changed Windows cmd step to use bash shell with ACTION_PATH env var instead of interpolating `${{ github.action_path }}`.
+1. **script-injection / static-inline-injection (lines 75, 78, 79, 83)**: Moved `inputs.mesa3d-release` to an `env:` block as `MESA3D_RELEASE` in the 'Determine OpenGL version to install on Windows' step. Replaced all `${{ inputs.mesa3d-release }}` interpolations with `$MESA3D_RELEASE` shell variable references.
 
-2. action.yml github-env-injection: Added `safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')` before writing to GITHUB_ENV.
+2. **github-env-injection (line 81)**: Added sanitization step before writing to $GITHUB_ENV: `safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')` then writing `${safe}` to GITHUB_ENV instead of the raw variable.
 
-3. local.yml script-injection: Moved `${{ matrix.os }}` and `${{ matrix.qt }}` to env blocks (MATRIX_OS, MATRIX_QT) in both the 'Second test of PyVista' and 'Test Qt' steps.
+3. **script-injection (line 84)**: Moved `github.action_path` to an `env:` block as `ACTION_PATH` in the 'Install OpenGL on Windows' step. Changed the cmd shell command to use `%ACTION_PATH%` syntax (correct for cmd shell): `bash "%ACTION_PATH%\windows\install_opengl.sh"`.
 
-4. production.yml script-injection: Moved `${{ matrix.os }}` to env block as MATRIX_OS in the 'Use PyVista' step.
+### Iteration 2
 
-5. local.yml unpinned-uses: Pinned actions/checkout@v4→SHA, actions/setup-python@v5→SHA, actions/upload-artifact@v4→SHA (3 occurrences).
+**Fixes applied:** script-injection
 
-6. production.yml unpinned-uses: Pinned pyvista/setup-headless-display-action@v3→SHA, actions/setup-python@v5→SHA, actions/upload-artifact@v4→SHA.
+**Notes:**
 
-7. local.yml missing-permissions: Added `permissions: contents: read` at top level.
+Fixed two script-injection findings:
+1. windows/install_opengl.sh: Added double-quotes around ${MESA3D_VERSION} in the curl URL and ${NAME} in the 7z command and rm command. These variables originate from the user-controlled `inputs.mesa3d-release` input and were previously unquoted, allowing shell metacharacter injection.
+2. action.yml line 85: The ACTION_PATH env var is already correctly routed through the env: block with `ACTION_PATH: ${{ github.action_path }}` and the cmd command already wraps `%ACTION_PATH%` in double-quotes (`bash "%ACTION_PATH%\windows\install_opengl.sh"`). This is already the correct pattern for the script-injection fix — no additional changes were needed since github.action_path is a GitHub-controlled value and the quoting is already in place.
 
-8. production.yml missing-permissions: Added `permissions: contents: read` at top level.
+### Iteration 1
+
+**Fixes applied:** publish-gate
+
+**Notes:**
+
+Added '|| true' to the MESA3D_VERSION=$(curl ...) assignment at line 82 of action.yml. This preserves upstream's behavior where a non-zero exit from the curl pipeline (e.g., network failure) doesn't abort the step under bash's errexit mode. The output is still captured in MESA3D_VERSION when the command succeeds.
 
