@@ -1,0 +1,25 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+      - name: Assert env vars set
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE"
+          echo "PYVISTA_OFF_SCREEN=$PYVISTA_OFF_SCREEN"
+          if [ "$DISPLAY" != ":99.0" ]; then echo "FAIL: DISPLAY"; exit 1; fi
+          if [ "$XDG_SESSION_TYPE" != "x11" ]; then echo "FAIL: XDG_SESSION_TYPE"; exit 1; fi
+          if [ "$PYVISTA_OFF_SCREEN" != "true" ]; then echo "FAIL: PYVISTA_OFF_SCREEN"; exit 1; fi
+          if [ -n "$WAYLAND_DISPLAY" ]; then echo "FAIL: WAYLAND_DISPLAY should be unset"; exit 1; fi
+          echo "PASS"
+      - name: Assert X server is reachable
+        run: |
+          if ! xset q > /dev/null; then echo "FAIL: xset q failed"; exit 1; fi
+          dpkg -s xvfb > /dev/null || { echo "FAIL: xvfb not installed"; exit 1; }
+          echo "PASS"

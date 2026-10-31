@@ -1,0 +1,20 @@
+name: Test pyvista disabled
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          pyvista: "false"
+      - name: Assert PyVista env not set but display configured
+        run: |
+          echo "PYVISTA_OFF_SCREEN=${PYVISTA_OFF_SCREEN:-<unset>}"
+          echo "DISPLAY=$DISPLAY"
+          if [ -n "$PYVISTA_OFF_SCREEN" ]; then echo "FAIL: PYVISTA_OFF_SCREEN should be unset"; exit 1; fi
+          if [ "$DISPLAY" != ":99.0" ]; then echo "FAIL: DISPLAY"; exit 1; fi
+          xset q > /dev/null || { echo "FAIL: X server unreachable"; exit 1; }
+          echo "PASS"

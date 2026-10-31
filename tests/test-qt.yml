@@ -1,0 +1,21 @@
+name: Test Qt dependencies
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          qt: "true"
+      - name: Assert Qt packages installed
+        run: |
+          for p in libxcb-cursor0 libxkbcommon-x11-0 libxcb-xinerama0 mesa-utils x11-utils libegl1; do
+            if ! dpkg -s "$p" > /dev/null 2>&1; then echo "FAIL: $p not installed"; exit 1; fi
+            echo "ok: $p"
+          done
+          if [ "$DISPLAY" != ":99.0" ]; then echo "FAIL: DISPLAY"; exit 1; fi
+          xdpyinfo > /dev/null || { echo "FAIL: xdpyinfo failed"; exit 1; }
+          echo "PASS"

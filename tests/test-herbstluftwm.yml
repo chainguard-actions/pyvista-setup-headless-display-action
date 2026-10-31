@@ -1,0 +1,24 @@
+name: Test herbstluftwm window manager
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          wm: herbstluftwm
+      - name: Assert herbstluftwm running
+        run: |
+          echo "DISPLAY=$DISPLAY"
+          if [ "$DISPLAY" != ":99.0" ]; then echo "FAIL: DISPLAY"; exit 1; fi
+          command -v herbstluftwm || { echo "FAIL: herbstluftwm not installed"; exit 1; }
+          ok=""
+          for _ in $(seq 50); do
+            if herbstclient version; then ok=1; break; fi
+            sleep 0.2
+          done
+          if [ -z "$ok" ]; then echo "FAIL: herbstclient cannot reach WM"; exit 1; fi
+          echo "PASS"
