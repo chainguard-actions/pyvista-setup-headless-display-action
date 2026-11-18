@@ -4,41 +4,29 @@
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
+**Policy SHA:** `374911c4be584df24e6da57af2d990570ef0f859`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
 **Harden Agent Version:** `2`
 
-Action **pyvista--setup-headless-display-action/v5.1.0** was hardened automatically. 6 finding(s) were identified and resolved across 2 iteration(s).
+Action **pyvista--setup-headless-display-action/v5.1.0** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Multiple `${{ inputs.* }}` expressions are interpolated directly inside `run:` shell command strings in the 'Determine OpenGL version to install on Windows' step, allowing an attacker-controlled value to be injected into the shell before quoting can protect it.
-
-Offending lines:
-- Line 120: `if [ "${{ inputs.mesa3d-release }}" == "latest" ]; then`
-- Line 121: `if [[ "${{ inputs.install-mesa3d-offscreen }}" == "true" ]]; then`
-- Line 130: `export MESA3D_VERSION=${{ inputs.mesa3d-release }}` (also sub-rule (b): unquoted expansion)
-
-Fix: move inputs into `env:` variables and reference them as double-quoted shell variables (`"$MESA3D_RELEASE"`, `"$INSTALL_MESA3D_OFFSCREEN"`) inside the `run:` block.
+Rule (a): the step 'Determine OpenGL version to install on Windows' puts input expressions straight into the run script: `if [ "${{ inputs.mesa3d-release }}" == "latest" ]`, `if [[ "${{ inputs.install-mesa3d-offscreen }}" == "true" ]]` and `export MESA3D_VERSION=${{ inputs.mesa3d-release }}` (the last one is unquoted too). The template engine substitutes these values before the shell runs, so a crafted input can run arbitrary commands. Fix: move the inputs into env: variables and expand them in double quotes.
 
 Locations:
 
-- `action.yml:120`
 - `action.yml:121`
-- `action.yml:130`
+- `action.yml:122`
+- `action.yml:131`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): `${{ github.action_path }}` is interpolated directly inside a `run:` shell command string in the 'Install OpenGL on Windows' step. Although `github.action_path` is GitHub-controlled, any `${{ ... }}` expression inside a `run:` block is a script-injection risk because the value flows through YAML template substitution before the shell ever sees it.
-
-Offending line:
-- Line 146: `run: bash ${{ github.action_path }}\windows\install_opengl.sh`
-
-Fix: use the `$GITHUB_ACTION_PATH` environment variable instead: `run: bash "$GITHUB_ACTION_PATH/windows/install_opengl.sh"`
+Rule (a): the step 'Install OpenGL on Windows' puts an expression straight into the run script: `run: bash ${{ github.action_path }}\windows\install_opengl.sh`. Fix: use the GITHUB_ACTION_PATH env var, quoted, instead of the expression.
 
 Locations:
 
@@ -46,17 +34,20 @@ Locations:
 
 ### github-env-injection (severity: high)
 
-In the 'Determine OpenGL version to install on Windows' step, the value of `inputs.mesa3d-release` is interpolated directly into the shell variable `MESA3D_VERSION` (line 130: `export MESA3D_VERSION=${{ inputs.mesa3d-release }}`), and then that variable is written to `$GITHUB_ENV` on line 132 (`echo "MESA3D_VERSION=${MESA3D_VERSION}" | tee -a $GITHUB_ENV`) without the required sanitization step (`printf '%s' "$MESA3D_VERSION" | tr -d '\n\r'`). A newline embedded in the input value could inject arbitrary environment variables into subsequent steps.
-
-Fix: sanitize before writing:
-```
-safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
-echo "MESA3D_VERSION=${safe}" >> "$GITHUB_ENV"
-```
+The step 'Determine OpenGL version to install on Windows' sets MESA3D_VERSION from inputs.mesa3d-release, or from a curl response, and writes it with `echo "MESA3D_VERSION=${MESA3D_VERSION}" | tee -a $GITHUB_ENV`. Nothing strips newlines first (no `printf '%s' ... | tr -d '\n\r'`), so a value containing a newline can inject extra environment variables.
 
 Locations:
 
-- `action.yml:132`
+- `action.yml:133`
+
+### github-env-injection (severity: high)
+
+The step 'Start a headless Wayland compositor (Weston) on Linux' builds XDG_RUNTIME_DIR from inherited process env vars it does not set itself (`${XDG_RUNTIME_DIR:-${RUNNER_TEMP}/xdg-runtime-dir}`). It then writes `echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"` and `echo "WESTON_LOG=$log"` (log comes from RUNNER_TEMP) to $GITHUB_ENV through `tee -a`. Nothing strips newlines before the write (case e).
+
+Locations:
+
+- `action.yml:214`
+- `action.yml:221`
 
 ### static-inline-injection (severity: high)
 
@@ -82,34 +73,112 @@ Locations:
 
 - `action.yml:131`
 
+### prior-fix (severity: high)
+
+Carried forward from this version's previous harden, which fixed it; fix it again unless the code no longer has the problem. The previous harden changed action.yml without recording a finding for it, and this analysis reported nothing there. Re-apply its security changes unless the code no longer needs them. The previous patch:
+```diff
+diff --git a/action.yml b/action.yml
+index e46f59e..a49e0fb 100644
+--- a/action.yml
++++ b/action.yml
+@@ -43,6 +43,23 @@ branding:
+ runs:
+   using: "composite"
+   steps:
+     - name: Install Linux dependencies
+       if: runner.os == 'Linux'
+       shell: bash
+@@ -113,13 +130,15 @@ runs:
+         # `timeout` backstops hangs the apt-level timeouts above do not cover
+         "${sudo[@]}" timeout 5m apt-get update "${opts[@]}"
+         "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y "${opts[@]}" "${packages[@]}"
+-
+     - name: Determine OpenGL version to install on Windows
+       if: runner.os == 'Windows'
+       shell: bash
++      env:
++        MESA3D_RELEASE: ${{ inputs.mesa3d-release }}
++        INSTALL_MESA3D_OFFSCREEN: ${{ inputs.install-mesa3d-offscreen }}
+       run: |
+-        if [ "${{ inputs.mesa3d-release }}" == "latest" ]; then
+-          if [[ "${{ inputs.install-mesa3d-offscreen }}" == "true" ]]; then
++        if [ "$MESA3D_RELEASE" == "latest" ]; then
++          if [[ "$INSTALL_MESA3D_OFFSCREEN" == "true" ]]; then
+             echo "Using latest Mesa3D release with off-screen renderer..."
+             export MESA3D_VERSION=25.0.7
+           else
+@@ -128,10 +147,10 @@ runs:
+           fi
+         else
+           echo "Using specified Mesa3D release version..."
+-          export MESA3D_VERSION=${{ inputs.mesa3d-release }}
++          export MESA3D_VERSION="$MESA3D_RELEASE"
+         fi
+-        echo "MESA3D_VERSION=${MESA3D_VERSION}" | tee -a $GITHUB_ENV
+-
++        safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
++        echo "MESA3D_VERSION=${safe}" >> "$GITHUB_ENV"
+     - name: Enable Mesa3D off-screen renderer on Windows
+       if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
+       shell: bash
+@@ -139,12 +158,10 @@ runs:
+         echo "Enabling Mesa3D off-screen renderer for Windows..."
+         export MESA3D_OFFSCREEN="true"
+         echo "MESA3D_OFFSCREEN=${MESA3D_OFFSCREEN}" | tee -a $GITHUB_ENV
+-
+     - name: Install OpenGL on Windows
+       if: runner.os == 'Windows'
+-      shell: cmd
+-      run: bash ${{ github.action_path }}\windows\install_opengl.sh
+-
++      shell: bash
++      run: bash "$GITHUB_ACTION_PATH/windows/install_opengl.sh"
+     - name: Start a headless X server (Xvfb) on Linux
+       if: runner.os == 'Linux' && inputs.wm != 'weston'
+       shell: bash
+@@ -160,7 +177,6 @@ runs:
+           sleep 0.1
+         done
+         xset q > /dev/null  # fail here rather than with a cryptic error downstream
+-
+     - name: Start a headless Wayland compositor (Weston) on Linux
+       if: runner.os == 'Linux' && inputs.wm == 'weston'
+       shell: bash
+@@ -228,7 +244,6 @@ runs:
+         done
+         echo "::error::Weston never came up on the GL renderer"
+         exit 1
+-
+     - name: Start window manager (herbstluftwm) on Linux
+       if: runner.os == 'Linux' && inputs.wm == 'herbstluftwm'
+       shell: bash
+@@ -238,12 +253,10 @@ runs:
+           herbstclient version > /dev/null 2>&1 && break
+           sleep 0.1
+         done
+-
+     - name: Configure for PyVista
+       if: inputs.pyvista != 'false'
+       shell: bash
+       run: echo "PYVISTA_OFF_SCREEN=true" >> $GITHUB_ENV
+-
+     - name: Configure Mesa3D for PyVista/VTK (on Windows)
+       if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
+       shell: bash
+
+```
+
+Locations:
+
+- `action.yml`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, static-inline-injection
+**Fixes applied:** script-injection, github-env-injection, static-inline-injection, prior-fix
 
 **Notes:**
 
-Fixed all findings in action.yml:
-1. 'Determine OpenGL version to install on Windows' step: Added `env:` block with `MESA3D_RELEASE: ${{ inputs.mesa3d-release }}` and `INSTALL_MESA3D_OFFSCREEN: ${{ inputs.install-mesa3d-offscreen }}`. Replaced all inline `${{ inputs.* }}` expressions in the `run:` block with `"$MESA3D_RELEASE"` and `"$INSTALL_MESA3D_OFFSCREEN"`. Added sanitization before writing to GITHUB_ENV: `safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')` and `echo "MESA3D_VERSION=${safe}" >> "$GITHUB_ENV"`.
-2. 'Install OpenGL on Windows' step: Replaced `bash ${{ github.action_path }}\windows\install_opengl.sh` with `bash "$GITHUB_ACTION_PATH/windows/install_opengl.sh"` and changed shell from `cmd` to `bash` so the environment variable expands correctly.
-
-### Iteration 2
-
-**Fixes applied:** missing-permissions, unpinned-uses, script-injection
-
-**Notes:**
-
-Fixed all 7 findings across two workflow files:
-
-**local.yml:**
-- Added top-level `permissions: contents: read` block (missing-permissions)
-- Pinned actions/checkout@v7, actions/setup-python@v7, and actions/upload-artifact@v7 (×3) to full SHA digests (unpinned-uses)
-- Moved `${{ env.ARTIFACT_PREFIX }}` into step env block, referenced as `$ARTIFACT_PREFIX` in shell (script-injection)
-- Moved `${{ matrix.qt }}` into step env block as `MATRIX_QT`, referenced as `"$MATRIX_QT"` in pip install (script-injection)
-- Moved `${{ steps.pyvista.outcome }}` and `${{ steps.qt.outcome }}` into step env block as `PYVISTA_OUTCOME`/`QT_OUTCOME`, referenced as shell variables (script-injection)
-
-**production.yml:**
-- Pinned pyvista/setup-headless-display-action@v5, actions/setup-python@v7, and actions/upload-artifact@v7 to full SHA digests (unpinned-uses)
-- Moved `${{ matrix.os }}` into step env block as `MATRIX_OS`, used `os.environ['MATRIX_OS']` in the Python one-liner to avoid shell injection (script-injection)
+action.yml: In 'Determine OpenGL version to install on Windows', moved inputs.mesa3d-release and inputs.install-mesa3d-offscreen into env (MESA3D_RELEASE, INSTALL_MESA3D_OFFSCREEN), expanded them in double quotes, and stripped CR/LF from MESA3D_VERSION before writing it to the quoted $GITHUB_ENV. In 'Install OpenGL on Windows', kept upstream's shell: cmd and swapped the ${{ github.action_path }} expression for a quoted "%GITHUB_ACTION_PATH%\windows\install_opengl.sh", so the same bash binary still runs the script. In the Weston step, stripped CR/LF from XDG_RUNTIME_DIR and the log path before writing them to $GITHUB_ENV. This covers the security changes from the earlier harden; none of its formatting changes were re-applied.
 
