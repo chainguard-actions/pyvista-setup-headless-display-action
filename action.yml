@@ -129,6 +129,7 @@ runs:
         # `timeout` backstops hangs the apt-level timeouts above do not cover
         "${sudo[@]}" timeout 5m apt-get update "${opts[@]}"
         "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive timeout 10m apt-get install -y "${opts[@]}" "${packages[@]}"
+
     - name: Determine OpenGL version to install on Windows
       if: runner.os == 'Windows'
       shell: bash
@@ -150,6 +151,7 @@ runs:
         fi
         safe=$(printf '%s' "$MESA3D_VERSION" | tr -d '\n\r')
         echo "MESA3D_VERSION=${safe}" | tee -a "$GITHUB_ENV"
+
     - name: Enable Mesa3D off-screen renderer on Windows
       if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
       shell: bash
@@ -157,10 +159,12 @@ runs:
         echo "Enabling Mesa3D off-screen renderer for Windows..."
         export MESA3D_OFFSCREEN="true"
         echo "MESA3D_OFFSCREEN=${MESA3D_OFFSCREEN}" | tee -a $GITHUB_ENV
+
     - name: Install OpenGL on Windows
       if: runner.os == 'Windows'
       shell: cmd
-      run: bash %GITHUB_ACTION_PATH%\windows\install_opengl.sh
+      run: bash "%GITHUB_ACTION_PATH%\windows\install_opengl.sh"
+
     - name: Start a headless X server (Xvfb) on Linux
       if: runner.os == 'Linux' && inputs.wm != 'weston'
       shell: bash
@@ -176,6 +180,7 @@ runs:
           sleep 0.1
         done
         xset q > /dev/null  # fail here rather than with a cryptic error downstream
+
     - name: Start a headless Wayland compositor (Weston) on Linux
       if: runner.os == 'Linux' && inputs.wm == 'weston'
       shell: bash
@@ -225,14 +230,16 @@ runs:
           # up, so by now the log says which renderer won.
           if [ -S "$socket" ] && grep -qE 'Using GL renderer|GL renderer: ' "$log"; then
             echo "Compositor is up: weston $args"
+            safe_xdg=$(printf '%s' "$XDG_RUNTIME_DIR" | tr -d '\n\r')
+            safe_log=$(printf '%s' "$log" | tr -d '\n\r')
             {
-              echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+              echo "XDG_RUNTIME_DIR=$safe_xdg"
               echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
               echo "XDG_SESSION_TYPE=wayland"
               echo "QT_QPA_PLATFORM=wayland"
               echo "LIBGL_ALWAYS_SOFTWARE=1"
               echo "GALLIUM_DRIVER=llvmpipe"
-              echo "WESTON_LOG=$log"
+              echo "WESTON_LOG=$safe_log"
             } | tee -a "$GITHUB_ENV"
             exit 0
           fi
@@ -243,6 +250,7 @@ runs:
         done
         echo "::error::Weston never came up on the GL renderer"
         exit 1
+
     - name: Start window manager (herbstluftwm) on Linux
       if: runner.os == 'Linux' && inputs.wm == 'herbstluftwm'
       shell: bash
@@ -252,10 +260,12 @@ runs:
           herbstclient version > /dev/null 2>&1 && break
           sleep 0.1
         done
+
     - name: Configure for PyVista
       if: inputs.pyvista != 'false'
       shell: bash
       run: echo "PYVISTA_OFF_SCREEN=true" >> $GITHUB_ENV
+
     - name: Configure Mesa3D for PyVista/VTK (on Windows)
       if: runner.os == 'Windows' && inputs.install-mesa3d-offscreen == 'true'
       shell: bash
